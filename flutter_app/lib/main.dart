@@ -27,7 +27,7 @@ import 'package:http/http.dart' as http;
 
 const apiBaseUrl = String.fromEnvironment(
   'SHEGUARD_API_URL',
-  defaultValue: 'http://127.0.0.1:8000',
+  defaultValue: 'https://sheguard-ice5.onrender.com',
 );
 
 // ---------------------------------------------------------------------------
@@ -1098,6 +1098,56 @@ class Draft extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Asks the backend to write one short message about this chat that the
+  /// student can send to a [audience] ('parent' or 'teacher').
+  Future<String> buildSummary(String audience) async {
+    var history = messages.length > 40
+        ? messages.sublist(messages.length - 40)
+        : List<ChatMsg>.of(messages);
+    while (history.isNotEmpty && !history.first.fromUser) {
+      history = history.sublist(1);
+    }
+    if (history.isEmpty) {
+      throw Exception('Nothing to summarise yet.');
+    }
+
+    final response = await http
+        .post(
+          Uri.parse('$apiBaseUrl/summary'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'category': category,
+            'audience': audience,
+            'immediate_danger': urgent,
+            'messages': [
+              for (final m in history)
+                {'role': m.fromUser ? 'user' : 'assistant', 'content': m.text},
+            ],
+          }),
+        )
+        .timeout(const Duration(seconds: 60));
+
+    if (response.statusCode != 200) {
+      var detail = 'HTTP ${response.statusCode}';
+      try {
+        final body = jsonDecode(utf8.decode(response.bodyBytes));
+        if (body is Map && body['detail'] != null) {
+          detail = body['detail'].toString();
+        }
+      } catch (_) {
+        // Keep the status code if the error body isn't JSON.
+      }
+      throw Exception(detail);
+    }
+
+    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+    final text = decoded is Map ? '${decoded['summary'] ?? ''}'.trim() : '';
+    if (text.isEmpty) {
+      throw const FormatException('The summary was empty.');
+    }
+    return text;
+  }
+
   @override
   void dispose() {
     _disposed = true;
@@ -1802,6 +1852,40 @@ class _TalkTabState extends State<TalkTab> {
                 },
               ),
             ),
+            if (msgs.any((m) => !m.fromUser) && !keyboardOpen)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 6, 16, 8),
+                child: Tap(
+                  onTap: d.loading ? null : () => showSummarySheet(context, d),
+                  child: Opacity(
+                    opacity: d.loading ? 0.5 : 1,
+                    child: Container(
+                      height: 46,
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: P.cream,
+                        borderRadius: BorderRadius.circular(23),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.mark_email_unread_outlined,
+                              size: 19, color: P.navy),
+                          SizedBox(width: 8),
+                          Text(
+                            'Make a message for a parent or teacher',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 14,
+                              color: P.navy,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             _Composer(
               controller: d.controller,
               focusNode: inputFocus,
@@ -2275,6 +2359,314 @@ class _EmergencyBanner extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Bottom sheet: AI-written summary the student can edit, then copy.
+Future<void> showSummarySheet(BuildContext context, Draft draft) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    backgroundColor: P.bg,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
+    ),
+    builder: (_) => _SummarySheet(draft: draft),
+  );
+}
+
+class _SummarySheet extends StatefulWidget {
+  final Draft draft;
+  const _SummarySheet({required this.draft});
+
+  @override
+  State<_SummarySheet> createState() => _SummarySheetState();
+}
+
+class _SummarySheetState extends State<_SummarySheet> {
+  final text = TextEditingController();
+  String audience = 'parent';
+  bool loading = true;
+  bool copied = false;
+  String? error;
+  int _req = 0;
+  Timer? _copiedTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    text.addListener(() {
+      if (mounted) setState(() {});
+    });
+    _generate();
+  }
+
+  @override
+  void dispose() {
+    _req++;
+    _copiedTimer?.cancel();
+    text.dispose();
+    super.dispose();
+  }
+
+  Future<void> _generate() async {
+    final req = ++_req;
+    setState(() {
+      loading = true;
+      error = null;
+      copied = false;
+    });
+    try {
+      final result = await widget.draft.buildSummary(audience);
+      if (!mounted || req != _req) return;
+      text.text = result;
+      setState(() => loading = false);
+    } on TimeoutException {
+      if (!mounted || req != _req) return;
+      setState(() {
+        loading = false;
+        error = 'That took too long. Please try again.';
+      });
+    } catch (_) {
+      if (!mounted || req != _req) return;
+      setState(() {
+        loading = false;
+        error = "We couldn't write the message. Check your connection and try again.";
+      });
+    }
+  }
+
+  void _pick(String a) {
+    if (loading || a == audience) return;
+    HapticFeedback.selectionClick();
+    audience = a;
+    _generate();
+  }
+
+  Future<void> _copy() async {
+    final value = text.text.trim();
+    if (value.isEmpty) return;
+    HapticFeedback.mediumImpact();
+    await Clipboard.setData(ClipboardData(text: value));
+    if (!mounted) return;
+    setState(() => copied = true);
+    _copiedTimer?.cancel();
+    _copiedTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted) setState(() => copied = false);
+    });
+  }
+
+  Widget _audienceChip(String value, String label, IconData icon) {
+    final selected = audience == value;
+    return Tap(
+      onTap: () => _pick(value),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        height: 40,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        decoration: BoxDecoration(
+          color: selected ? P.navy : P.card,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: selected ? P.navy : P.line, width: 1.5),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 18, color: selected ? P.cream : P.navy),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 14,
+                color: selected ? P.cream : P.navy,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final canCopy = !loading && error == null && text.text.trim().isNotEmpty;
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Heading('Message to share', size: 24),
+              const SizedBox(height: 6),
+              const Text(
+                'A short summary of your chat. Read it, change anything that '
+                "isn't right, then copy it.",
+                style: TextStyle(color: P.soft, height: 1.4, fontSize: 15),
+              ),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _audienceChip('parent', 'For a parent', Icons.family_restroom_outlined),
+                  _audienceChip('teacher', 'For a teacher', Icons.school_outlined),
+                ],
+              ),
+              const SizedBox(height: 16),
+              if (loading)
+                Container(
+                  height: 140,
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    color: P.card,
+                    borderRadius: BorderRadius.circular(22),
+                    border: Border.all(color: P.line, width: 1.5),
+                  ),
+                  child: const Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      SizedBox(
+                        width: 26,
+                        height: 26,
+                        child: CircularProgressIndicator(strokeWidth: 3, color: P.navy),
+                      ),
+                      SizedBox(height: 12),
+                      Text('Writing a short message…',
+                          style: TextStyle(color: P.soft, fontSize: 14.5)),
+                    ],
+                  ),
+                )
+              else if (error != null)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: P.brickPale,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(error!,
+                          style: const TextStyle(
+                              color: P.navy, height: 1.4, fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 10),
+                      Tap(
+                        onTap: _generate,
+                        child: Container(
+                          padding:
+                              const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                          decoration: BoxDecoration(
+                            color: P.navy,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.refresh_rounded, size: 16, color: P.cream),
+                              SizedBox(width: 6),
+                              Text('Try again',
+                                  style: TextStyle(
+                                      color: P.cream,
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 13)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              else
+                TextField(
+                  controller: text,
+                  minLines: 5,
+                  maxLines: 10,
+                  maxLength: 900,
+                  buildCounter: (_, {required currentLength, required isFocused, maxLength}) =>
+                      null,
+                  keyboardType: TextInputType.multiline,
+                  textCapitalization: TextCapitalization.sentences,
+                  style: const TextStyle(fontSize: 16, color: P.navy, height: 1.45),
+                  decoration: InputDecoration(
+                    filled: true,
+                    fillColor: P.card,
+                    contentPadding: const EdgeInsets.all(16),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(22),
+                      borderSide: const BorderSide(color: P.line, width: 1.5),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(22),
+                      borderSide: const BorderSide(color: P.line, width: 1.5),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(22),
+                      borderSide: const BorderSide(color: P.navy, width: 2),
+                    ),
+                  ),
+                ),
+              const SizedBox(height: 12),
+              const Text(
+                'Written by AI from your chat, so please check it is correct '
+                'before you send it. You decide who sees it.',
+                style: TextStyle(fontSize: 12.5, color: P.soft, height: 1.35),
+              ),
+              const SizedBox(height: 14),
+              Tap(
+                onTap: canCopy ? _copy : null,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  height: 54,
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    color: !canCopy ? P.line : (copied ? P.navy : P.gold),
+                    borderRadius: BorderRadius.circular(27),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        copied ? Icons.check_rounded : Icons.copy_rounded,
+                        size: 20,
+                        color: copied ? P.cream : (canCopy ? P.navy : P.soft),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        copied
+                            ? 'Copied. Paste it into WhatsApp, SMS or email'
+                            : 'Copy message',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 15,
+                          color: copied ? P.cream : (canCopy ? P.navy : P.soft),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              if (canCopy)
+                Align(
+                  alignment: Alignment.center,
+                  child: TextButton.icon(
+                    onPressed: _generate,
+                    style: TextButton.styleFrom(foregroundColor: P.navy),
+                    icon: const Icon(Icons.autorenew_rounded, size: 18),
+                    label: const Text('Write it again'),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }

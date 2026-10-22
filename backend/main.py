@@ -147,6 +147,18 @@ class ChatResponse(BaseModel):
     demo_notice: str
 
 
+class SummaryRequest(BaseModel):
+    category: Category
+    audience: Literal["parent", "teacher"] = "parent"
+    immediate_danger: bool = False
+    messages: list[ChatTurn] = Field(min_length=1, max_length=60)
+
+
+class SummaryResponse(BaseModel):
+    audience: str
+    summary: str
+
+
 # ==================================================
 # PROMPT PIECES
 # ==================================================
@@ -249,6 +261,52 @@ ONGOING CONVERSATION:
 """
 
 
+SUMMARY_RULES = """
+You help a student write ONE short message that she will send to
+her {audience} to ask for help. Write it as the student, in the
+first person ("I").
+
+You are given a conversation between the student and SHEGUARD, an
+AI support companion. Base the message ONLY on what the student
+herself said. Use SHEGUARD's replies only to understand the
+context. Never include SHEGUARD's advice, and never mention the
+app or AI.
+
+RULES:
+- 3 to 5 short sentences, at most 80 words.
+- Plain text only: no markdown, bullet points, headings, emojis,
+  or subject line.
+- Be accurate. Never add, guess or exaggerate. If something was not
+  said (who, when, how often), leave it out.
+- Do not include names, phone numbers or addresses unless the
+  student wrote them herself.
+- Cover: what happened, how it is affecting her, and what she is
+  asking for (for example to talk, or for support and guidance).
+- Tone: calm, respectful and honest. Start with "{greeting}".
+- End with one clear, polite request. {ending}
+- If she may be in immediate danger, or she mentions hurting
+  herself, say clearly that she needs help urgently and ask them to
+  contact her right away.
+- Write in the same language the student used.
+- Output only the message text, nothing else.
+"""
+
+SUMMARY_AUDIENCE = {
+    "parent": {
+        "audience": "parent or guardian",
+        "greeting": "Hi,",
+        "ending": "Ask to talk when they have time.",
+    },
+    "teacher": {
+        "audience": "teacher or counsellor",
+        "greeting": "Hello,",
+        "ending": (
+            "Ask for a time to speak and for guidance on what to do next."
+        ),
+    },
+}
+
+
 # ==================================================
 # AI HELPERS (multi-provider with fallback)
 # ==================================================
@@ -281,11 +339,11 @@ def clean_reply(text: str) -> tuple[str, bool]:
 
 
 async def call_provider(client: httpx.AsyncClient, provider: dict,
-                        messages: list[dict]) -> str:
+                        messages: list[dict], temperature: float = 0.6) -> str:
     payload = {
         "model": provider["model"],
         "messages": messages,
-        "temperature": 0.6,
+        "temperature": temperature,
         # Reasoning models spend tokens on thinking, so leave room
         # or the reply gets cut off or comes back empty.
         "max_tokens": 2000,
@@ -317,7 +375,8 @@ async def call_provider(client: httpx.AsyncClient, provider: dict,
     return content
 
 
-async def call_ai(messages: list[dict]) -> tuple[str, bool]:
+async def call_ai(messages: list[dict],
+                  temperature: float = 0.6) -> tuple[str, bool]:
     """Try every configured provider/key in order until one works.
     Returns (reply_text, is_urgent)."""
 
@@ -340,7 +399,7 @@ async def call_ai(messages: list[dict]) -> tuple[str, bool]:
             label = provider["label"]
 
             try:
-                content = await call_provider(client, provider, messages)
+                content = await call_provider(client, provider, messages, temperature)
                 reply, urgent = clean_reply(content)
 
                 if not reply:
@@ -482,3 +541,64 @@ async def chat(data: ChatRequest):
         human_help=True,
         demo_notice=DEMO_NOTICE,
     )
+
+
+# ==================================================
+# SHAREABLE SUMMARY
+# Turns the conversation into one short message the student
+# can send to a parent or teacher. Nothing is stored.
+# ==================================================
+
+@app.post("/summary", response_model=SummaryResponse)
+async def summary(data: SummaryRequest):
+
+    turns = data.messages[-40:]
+    while turns and turns[0].role != "user":
+        turns = turns[1:]
+
+    if not any(t.role == "user" for t in turns):
+        raise HTTPException(
+            status_code=422,
+            detail="There is nothing to summarise yet.",
+        )
+
+    lines: list[str] = []
+    for t in turns:
+        if t.role == "user":
+            lines.append(f"Student: {t.content.strip()}")
+        else:
+            # Advice is only context, so keep it short.
+            lines.append(f"SHEGUARD: {t.content.strip()[:500]}")
+    transcript = "\n".join(lines)
+
+    cfg = SUMMARY_AUDIENCE[data.audience]
+    system_prompt = SUMMARY_RULES.format(**cfg)
+
+    user_prompt = (
+        f"Concern category: {data.category}\n"
+        f"Student marked immediate danger: "
+        f"{'Yes' if data.immediate_danger else 'No'}\n\n"
+        f"Conversation:\n{transcript}\n\n"
+        f"Write the message now."
+    )
+
+    text, _ = await call_ai(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.3,  # lower = more faithful, fewer invented details
+    )
+
+    # Tidy: drop wrapping quotes and a stray "Message:" label.
+    text = text.strip().strip('"\u201c\u201d').strip()
+    text = re.sub(r"^(message|summary)\s*:\s*", "", text, flags=re.IGNORECASE)
+    text = text.strip().strip('"\u201c\u201d').strip()
+
+    if not text:
+        raise HTTPException(
+            status_code=502,
+            detail="The summary came back empty. Please try again.",
+        )
+
+    return SummaryResponse(audience=data.audience, summary=text[:900])

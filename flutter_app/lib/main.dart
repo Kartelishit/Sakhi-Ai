@@ -78,7 +78,7 @@ class SheGuardApp extends StatelessWidget {
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'SHEGUARD',
+      title: 'Sakhi AI',
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(
@@ -762,7 +762,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               child: Row(
                 children: [
                   const Text(
-                    'SHEGUARD',
+                    'Sakhi AI',
                     style: TextStyle(
                       color: P.gold,
                       fontWeight: FontWeight.w800,
@@ -1312,7 +1312,7 @@ class HomeTab extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.only(bottom: 24),
       children: [
-        const TabHeader(kicker: 'SHEGUARD', title: 'You are safe here'),
+        const TabHeader(kicker: 'Sakhi AI', title: 'You are safe here'),
         // Hero card
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
@@ -1704,7 +1704,7 @@ class _TalkTabState extends State<TalkTab> {
 
         return Column(
           children: [
-            const TabHeader(kicker: 'Private chat', title: 'Talk to SHEGUARD'),
+            const TabHeader(kicker: 'Private chat', title: 'Talk to Sakhi AI'),
             if (!(keyboardOpen && msgs.isNotEmpty))
               SizedBox(
                 height: 46,
@@ -1782,7 +1782,7 @@ class _TalkTabState extends State<TalkTab> {
                         const _ChatBubble(
                           msg: ChatMsg(
                             false,
-                            "Hi, I'm SHEGUARD. This is a private space to talk "
+                            "Hi, I'm Sakhi AI. This is a private space to talk "
                             'things through. Share only what feels okay, and '
                             'please leave out names, phone numbers and addresses. '
                             'What would you like to talk about?',

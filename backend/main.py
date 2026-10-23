@@ -88,7 +88,7 @@ def build_providers() -> list[dict]:
                 "extra": {"reasoning": {"effort": "low"}},
                 "headers": {
                     "HTTP-Referer": "http://localhost",
-                    "X-Title": "SHEGUARD",
+                    "X-Title": "Sakhi AI",
                 },
             }
         )
@@ -174,7 +174,7 @@ HELPLINES YOU MAY MENTION (use only these, never invent numbers):
 """
 
 PERSONA = """
-You are SHEGUARD, a caring, non-judgemental support companion
+You are Sakhi AI, a caring, non-judgemental support companion
 for girls and young women in school. Students come to you when
 they feel hurt, scared, stressed, harassed or alone.
 
@@ -267,10 +267,10 @@ You help a student write ONE short message that she will send to
 her {audience} to ask for help. Write it as the student, in the
 first person ("I").
 
-You are given a conversation between the student and SHEGUARD, an
+You are given a conversation between the student and Sakhi AI, an
 AI support companion. Base the message ONLY on what the student
-herself said. Use SHEGUARD's replies only to understand the
-context. Never include SHEGUARD's advice, and never mention the
+herself said. Use Sakhi AI's replies only to understand the
+context. Never include Sakhi AI's advice, and never mention the
 app or AI.
 
 RULES:
@@ -569,7 +569,7 @@ async def summary(data: SummaryRequest):
             lines.append(f"Student: {t.content.strip()}")
         else:
             # Advice is only context, so keep it short.
-            lines.append(f"SHEGUARD: {t.content.strip()[:500]}")
+            lines.append(f"Sakhi AI: {t.content.strip()[:500]}")
     transcript = "\n".join(lines)
 
     cfg = SUMMARY_AUDIENCE[data.audience]

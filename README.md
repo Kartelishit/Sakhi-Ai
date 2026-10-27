@@ -1,8 +1,8 @@
-# Solace (SHEGUARD) — Flutter + FastAPI
+#Sakhi-AI — Flutter + FastAPI
 
 Built for the Technophilia 7.0 Code2App Agent competition, under the SHESAFE@SCHOOL brief.
 
-Solace is an AI-assisted student support application designed to help students navigate bullying, online harassment, stress, discrimination and other difficult situations.
+Sakhi Ai is an AI-assisted student support application designed to help students navigate bullying, online harassment, stress, discrimination and other difficult situations.
 
 ## Features
 
@@ -37,7 +37,7 @@ The application uses a pretrained AI model and prompt engineering. The model was
 
 ## Safety and Privacy
 
-Solace is a school-project demonstration, not a production safeguarding service or a replacement for a trained counsellor, doctor, lawyer or emergency service.
+Sakhi Ai is a school-project demonstration, not a production safeguarding service or a replacement for a trained counsellor, doctor, lawyer or emergency service.
 
 AI responses may be inaccurate, incomplete or inappropriate. The urgency mechanism is not a validated emergency-detection system. The application must not be used as the sole basis for safeguarding or disciplinary decisions.
 

@@ -54,8 +54,19 @@ class P {
   static const brickPale = Color(0xFFF8DFD9);
 }
 
+Future<void> warmUpBackend() async {
+  try {
+    await http
+        .get(Uri.parse('$apiBaseUrl/health'))
+        .timeout(const Duration(seconds: 90));
+  } catch (_) {
+    // Ignore: this is only a wake-up ping.
+  }
+}
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  warmUpBackend(); // fires in the background, don't await
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.dark,
@@ -1044,7 +1055,7 @@ class Draft extends ChangeNotifier {
               ],
             }),
           )
-          .timeout(const Duration(seconds: 60));
+          .timeout(const Duration(seconds: 90));
 
       if (response.statusCode != 200) {
         var detail = 'HTTP ${response.statusCode}';
@@ -2069,7 +2080,7 @@ class _TypingBubbleState extends State<_TypingBubble>
               ),
               child: widget.slow
                   ? const Text(
-                      'Still thinking. Thank you for waiting…',
+                      'Waking up the server — this can take up to a minute on first use…',
                       style: TextStyle(color: P.soft, fontSize: 14.5),
                     )
                   : AnimatedBuilder(
